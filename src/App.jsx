@@ -84,7 +84,10 @@ export default function App() {
   const [notice, setNotice] = useState("");
   const [ended, setEnded] = useState(false);
   const [summary, setSummary] = useState("");
+  const [confirmEnd, setConfirmEnd] = useState(false); // 終了確認の表示
+  const [listening, setListening] = useState(false);   // 音声入力中
   const scrollRef = useRef(null);
+  const recognitionRef = useRef(null);
 
   const userTurns = messages.filter((m) => m.role === "user").length;
   const turnsLeft = Math.max(0, TURN_LIMIT - userTurns);
@@ -142,6 +145,37 @@ export default function App() {
         : "うまく届きませんでした。もう一度送ってください。" }]);
     }
     setBusy(false);
+  }
+
+  // 音声入力（ブラウザ側で文字にする。Anthropicのトークンは使わない）
+  function toggleVoice() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      alert("このブラウザは音声入力に対応していません。スマホのキーボードのマイクからも、しゃべって入力できます。");
+      return;
+    }
+    if (listening) {
+      recognitionRef.current && recognitionRef.current.stop();
+      setListening(false);
+      return;
+    }
+    const rec = new SR();
+    rec.lang = "ja-JP";
+    rec.interimResults = true;
+    rec.continuous = true;
+    let base = input;
+    rec.onresult = (e) => {
+      let text = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        text += e.results[i][0].transcript;
+      }
+      setInput((base + text).slice(0, 2000));
+    };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recognitionRef.current = rec;
+    setListening(true);
+    rec.start();
   }
 
   async function finish() {
@@ -244,18 +278,47 @@ export default function App() {
         {!ended ? (
           <div style={{ borderTop: `1px solid ${C.line}`, padding: 12, background: "#fff" }}>
             {notice && <div style={{ fontSize: 12, color: C.lemon, marginBottom: 8, lineHeight: 1.6 }}>{notice}</div>}
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-                placeholder="いま感じていることを、そのまま…"
-                rows={1}
-                style={{ flex: 1, resize: "none", border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 12px", fontSize: 14.5, fontFamily: "inherit", outline: "none", lineHeight: 1.5, maxHeight: 120 }}
+                onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
+                placeholder="いま感じていることを、そのまま…（改行できます）"
+                rows={3}
+                style={{ flex: 1, resize: "vertical", border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", fontSize: 15, fontFamily: "inherit", outline: "none", lineHeight: 1.7, minHeight: 78, maxHeight: 200 }}
               />
-              <button onClick={send} disabled={busy || !input.trim()} style={{ ...primaryBtn, padding: "0 18px", opacity: busy || !input.trim() ? 0.5 : 1 }}>送る</button>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {/* マイク（音声入力・トークン不要） */}
+                <button
+                  onClick={toggleVoice}
+                  disabled={busy}
+                  title="音声で入力"
+                  style={{
+                    width: 46, height: 46, borderRadius: 12, cursor: "pointer",
+                    border: `1px solid ${listening ? C.green : C.line}`,
+                    background: listening ? C.green : "#fff",
+                    color: listening ? "#fff" : C.sub,
+                    fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center",
+                  }}
+                >{listening ? "■" : "🎤"}</button>
+                <button onClick={send} disabled={busy || !input.trim()} style={{ ...primaryBtn, width: 46, height: 46, padding: 0, opacity: busy || !input.trim() ? 0.5 : 1 }}>➤</button>
+              </div>
             </div>
-            <button onClick={finish} disabled={busy} style={endBtn}>今日はここまでにする（記録を残す）</button>
+            {listening && <div style={{ fontSize: 11.5, color: C.green, marginTop: 6 }}>聞いています…　もう一度マイクを押すと止まります。</div>}
+            <div style={{ fontSize: 10.5, color: C.sub, marginTop: 6 }}>スマホは、キーボードのマイクからも話しかけられます。</div>
+
+            {/* 終了は確認を挟む（押し間違い防止） */}
+            {!confirmEnd ? (
+              <button onClick={() => setConfirmEnd(true)} disabled={busy} style={endBtn}>今日はここまでにする</button>
+            ) : (
+              <div style={{ marginTop: 10, padding: "10px 12px", border: `1px solid ${C.line}`, borderRadius: 12, background: C.greenSoft }}>
+                <div style={{ fontSize: 12.5, color: C.ink, marginBottom: 8 }}>今日はここまでにして、記録を残しますか？</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={finish} disabled={busy} style={{ ...primaryBtn, flex: 1, padding: "9px", fontSize: 13 }}>はい、終わる</button>
+                  <button onClick={() => setConfirmEnd(false)} disabled={busy} style={{ ...endBtn, flex: 1, marginTop: 0 }}>まだ続ける</button>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div style={{ borderTop: `1px solid ${C.line}`, padding: 16, background: "#fff", textAlign: "center" }}>
